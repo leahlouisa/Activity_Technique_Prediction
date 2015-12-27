@@ -1,0 +1,87 @@
+---
+title: "Activity Technique Prediction"
+date: "December 27, 2015"
+output: html_document
+---
+
+###Summary
+In this paper I describe an attempt to use accelerometer data to predict whether a biceps curl was performed properly.  The resulting judgment in the data is recorded as being either correct, or is classified into one of five common error types.  My prediction model uses random forests and achieved a 100% prediction success rate on both the training data as well as on 20 test cases not used to train the model.
+
+###Background
+The data used comes from the Weight Lifting Exercises Dataset, available here: <http://groupware.les.inf.puc-rio.br/har>, although the copy of the data that I used came from Coursera.  Details describing the methods by which the data was gathered are also available at that site.  I downloaded the dataset on December 26, 2015.
+
+###Data Preparation and PreProcessing
+The original dataset contained 160 variables.  The "classe" variable is the one I was trying to predict. I removed many of the other variables because they were either not useful for prediction, such as the names of study participants or the date of the experiment.  A great deal of the columns were almost entirely blank.  Further columns were made up almost entirely of "NA", or were either 1 or "DIV/0".  Because of the great wealth of available predictors, I decided to remove these columns.  My code for doing so is as follows:
+
+```{r chunk1, cache=TRUE, results='hide'}
+# Import the necessary libraries, as well as the training data set.
+library(caret)
+library(dplyr)
+library(parallel)
+library(doParallel)
+pml.training <- read.csv("~/Documents/R Coursera/Machine Learning/pml-training.csv")
+
+# When data is imported using R Studio, it will only be treated as numeric
+# if all values are either numeric or NA.  Thus weeding out factor variables
+# will remove columns like subject name or columns containing "DIV/0"
+dataTypes <- sapply(pml.training, class)
+dataTypesLogi <- (dataTypes=="numeric" | dataTypes=="integer")
+
+# Even though classe is a true factor variable and not numeric, I set it to 
+# TRUE so that it would be retained in the resulting data frame.
+dataTypesLogi["classe"] <- TRUE
+
+training <- pml.training[ , dataTypesLogi]
+training <- select(training, -(X:num_window))
+
+# Having removed factor variables, I now remove any column that is more than
+# 10% NA values.  Anything with less than 10% NA, I later choose to impute values into.
+training <- training[ , colSums(is.na(training)) < 0.1]
+```
+
+###Model Selection
+Once the data had been prepared, I tried out three different models in an attempt to find one that would accurately predict the value of the classe variable (and thus whether the study participant had correctly performed the arm curl exercise or had made a mistake):  
+
+* AdaBoost
+* Tree Model
+* Random Forests
+
+Unfortunately, the AdaBoost model failed to terminate in a timely manner, and was thus excluded from the study for being too computationally expensive.  This left the tree model and random forests.  My code for creating these models is shown below.
+
+```{r chunk2, cache=TRUE, results='hide'}
+set.seed(1212)
+
+# Create the tree model, specifying parameters with trainControl
+# Next, generate predictions and use a confusion matrix to judge their quality
+treeTrainControl <- trainControl(number=5, allowParallel=TRUE)
+treeModel <- train(classe ~., data=training, method="rpart", preProcess="knnImpute", trControl=treeTrainControl)
+treePredictions <- predict(treeModel, pml.training)
+treeConfusion <- confusionMatrix(treePredictions, pml.training$classe)
+
+# Create the rf model, specifying parameters with trainControl
+# Next, generate predictions and use a confusion matrix to judge their quality
+rfTrainControl <- trainControl(method="oob", number=5, allowParallel=TRUE)
+rfModel <- train(classe ~., data=training, method="rf", preProcess="knnImpute", trControl=rfTrainControl)
+rfPredictions <- predict(rfModel, pml.training)
+rfConfusion <- confusionMatrix(rfPredictions, pml.training$classe)
+```
+
+Having generated confusion matrices for both models, I can examine the quality of the predictions using the "overall" field in the confusion matrix.
+
+```{r chunk3, cache=TRUE}
+# Tree Model
+treeConfusion$overall
+
+
+# Random Forests Model
+rfConfusion$overall
+```
+
+The tree model accurately predicts the type of arm curl technique less than 50% of the time, whereas the random forests model predicts the technique 100% of the time in the training data.  Thus, the rf model is clearly the better choice.  I discard the tree model and present the random forests model as a good choice for predicting this data.
+
+### Out of Sample Error and Cross Validation
+
+The random tree model described above uses 5-fold cross validation, which is performed in the trainControl command.  Because the model perfectly classifies the training data, it is somewhat difficult to estimate what the out of sample error would be.  However, a fairly good estimation of it can be gotten by examining the OOB (out of bag) error estimate from the final model, which is 0.43% .
+
+Another source of validation for this model came from 20 data points that had been removed from the training set and placed in a separate test dataset by the Coursera instructors.  When the random forests model was applied to these twenty cases, it correctly categorized all 20 of them.
+
